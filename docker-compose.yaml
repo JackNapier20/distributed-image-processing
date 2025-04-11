@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  spark-master:
+    build: ./app
+    container_name: spark-master
+    hostname: spark-master
+    command: bash -c "/opt/spark/sbin/start-master.sh && tail -f /dev/null"
+    environment:
+      - SPARK_MODE=master
+      - PYSPARK_PYTHON=/usr/bin/python3
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+
+  spark-worker:
+    build: ./app
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    command: bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - PYSPARK_PYTHON=/usr/bin/python3
+    ports:
+      - "8081:8081"
+
+  image-app:
+    build: ./app
+    container_name: image-app
+    depends_on:
+      - spark-master
+      - spark-worker
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - PYSPARK_PYTHON=/usr/bin/python3
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+    volumes:
+      - ./app:/app
