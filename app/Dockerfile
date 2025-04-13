@@ -6,7 +6,7 @@ ENV SPARK_VERSION=3.5.5 \
 
 # Install Python 3.9 and dependencies
 RUN apt-get update && \
-    apt-get install -y python3.9 python3.9-distutils python3-pip curl wget git && \
+    apt-get install -y python3.9 python3.9-distutils python3-pip curl wget git dnsutils netcat procps && \
     ln -sf /usr/bin/python3.9 /usr/bin/python && \
     ln -sf /usr/bin/python3.9 /usr/bin/python3 && \
     pip3 install --upgrade pip
@@ -29,17 +29,5 @@ COPY . /app
 
 # Optional: install any Python packages your app uses
 RUN pip install -r requirements.txt || true
-
-#Copy images
-# FROM bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
-
-# # Copy the custom entrypoint script into the image
-# COPY copyimages.sh /usr/local/bin/entrypoint.sh
-
-# # Ensure the script has executable permissions
-# RUN chmod +x /usr/local/bin/entrypoint.sh
-
-# # Use the custom entrypoint script as the entrypoint
-# ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 CMD ["python", "main.py"]

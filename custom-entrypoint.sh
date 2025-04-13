@@ -1,17 +1,16 @@
 #!/bin/bash
-set -e
-(
-  # Wait for HDFS to be fully available
-  until hdfs dfsadmin -report | grep 'Datanodes available:' | grep -q '[1-9]'; do
-    echo "Waiting for HDFS to be up..."
-    sleep 2
-  done
-  echo "HDFS is up."
 
-  # Create the /images directory and copy files
-  hdfs dfs -mkdir -p /images || echo "/images already exists in HDFS."
-  hdfs dfs -put /images/* /images/ 2>/dev/null || echo "Images already copied or no new images."
-) &
+NAMENODE_DIR="/tmp/hadoop-root/dfs/name"
 
-# Then call the original entrypoint so that the namenode process runs in the foreground
-exec /entrypoint.sh "$@"
+# Format only if the directory is empty or not initialized
+if [ ! -d "$NAMENODE_DIR/current" ]; then
+  echo "$(date) First-time setup: formatting HDFS..."
+  # Make sure we're using the correct configuration
+  export HADOOP_CONF_DIR=/etc/hadoop
+  /opt/hadoop-2.7.4/bin/hdfs namenode -format -force -nonInteractive
+fi
+
+# Now start the actual daemon with the correct configuration
+echo "$(date) Starting NameNode service..."
+export HADOOP_CONF_DIR=/etc/hadoop
+/opt/hadoop-2.7.4/bin/hdfs namenode
