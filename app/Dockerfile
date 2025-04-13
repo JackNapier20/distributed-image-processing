@@ -30,4 +30,16 @@ COPY . /app
 # Optional: install any Python packages your app uses
 RUN pip install -r requirements.txt || true
 
+#Copy images
+# FROM bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+
+# # Copy the custom entrypoint script into the image
+# COPY copyimages.sh /usr/local/bin/entrypoint.sh
+
+# # Ensure the script has executable permissions
+# RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# # Use the custom entrypoint script as the entrypoint
+# ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
 CMD ["python", "main.py"]

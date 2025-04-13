@@ -33,9 +33,42 @@ services:
     depends_on:
       - spark-master
       - spark-worker
+      - namenode
+      - datanode
     environment:
       - SPARK_MASTER=spark://spark-master:7077
       - PYSPARK_PYTHON=/usr/bin/python3
       - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
     volumes:
       - ./app:/app
+    command: "python main.py"
+
+  namenode:
+    platform: linux/amd64
+    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=test
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "9000:9000"
+      - "50070:50070"
+    volumes:
+      - ./images:/images
+      
+  datanode:
+    platform: linux/amd64
+    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
+    container_name: datanode
+    depends_on:
+      - namenode
+    environment:
+      - CLUSTER_NAME=test
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - datanode-data:/hadoop/dfs/data
+    ports:
+      - "50075:50075"
+
+volumes:
+  datanode-data:

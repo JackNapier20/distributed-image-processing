@@ -1,32 +1,9 @@
-# from pyspark.sql import SparkSession
-# import cv2
-# import numpy as np
-
-# spark = SparkSession.builder \
-#     .appName("ImageClassifier") \
-#     .master("spark://spark-master:7077") \
-#     .getOrCreate()
-
-# sc = spark.sparkContext
-
-# # Load images from mounted volume (or HDFS later)
-# image_rdd = sc.binaryFiles("file:///app/images/*")
-
-# def decode_image(data):
-#     file_name, content = data
-#     img_array = np.frombuffer(content, np.uint8)
-#     img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-#     return file_name, img.shape if img is not None else (file_name, "Error")
-
-# results = image_rdd.map(decode_image).collect()
-
-# for file, shape in results:
-#     print(f"{file}: {shape}")
-
-
 from pyspark.sql import SparkSession
 import cv2
 import numpy as np
+import time
+
+time.sleep(20)
 
 # Start Spark
 spark = SparkSession.builder \
@@ -36,8 +13,12 @@ spark = SparkSession.builder \
 
 sc = spark.sparkContext
 
-# Load binary files
-image_rdd = sc.binaryFiles("file:///app/images/*")
+# Load binary files using directly
+# image_rdd = sc.binaryFiles("file:///app/images/*")
+
+# Load binary files using Hadoop
+image_rdd = sc.binaryFiles("hdfs://namenode:9000/images/*")
+print("Number of files loaded: ", image_rdd.count())
 
 def decode_image(data):
     path, content = data
@@ -53,3 +34,5 @@ results = image_rdd.map(decode_image).collect()
 
 for path, shape in results:
     print(f"{path.split('/')[-1]}: {shape}")
+
+input("Press Enter to exit...")
