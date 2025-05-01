@@ -69,7 +69,7 @@ services:
       - ./hadoop-config:/etc/hadoop
     networks:
       - hadoop-net
-      
+
   datanode:
     platform: linux/amd64
     image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
@@ -89,6 +89,7 @@ services:
 
 volumes:
   datanode-data:
+
 
 networks:
   hadoop-net:
