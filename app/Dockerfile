@@ -2,7 +2,8 @@ FROM openjdk:11-slim
 
 ENV SPARK_VERSION=3.5.5 \
     HADOOP_VERSION=3 \
-    SPARK_HOME=/opt/spark
+    SPARK_HOME=/opt/spark \
+    HADOOP_HOME=/opt/hadoop
 
 # Install Python 3.9 and dependencies
 RUN apt-get update && \
@@ -11,8 +12,18 @@ RUN apt-get update && \
     ln -sf /usr/bin/python3.9 /usr/bin/python3 && \
     pip3 install --upgrade pip
 
+# Install OpenCV dependencies
 RUN apt-get update && apt-get install -y libgl1 libglib2.0-0
-RUN pip install --upgrade pip pyspark opencv-python
+
+# Install PyTorch and other Python packages
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --upgrade pip pyspark opencv-python numpy
+
+# Download and install Hadoop client
+RUN wget https://archive.apache.org/dist/hadoop/common/hadoop-3.3.4/hadoop-3.3.4.tar.gz && \
+    tar -xvzf hadoop-3.3.4.tar.gz && \
+    mv hadoop-3.3.4 ${HADOOP_HOME} && \
+    rm hadoop-3.3.4.tar.gz
 
 # Download and install Spark
 RUN wget https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz && \
@@ -20,14 +31,10 @@ RUN wget https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SP
     mv spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} ${SPARK_HOME} && \
     rm spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz
 
-ENV PATH="${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${PATH}"
-
+ENV PATH="${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${HADOOP_HOME}/bin:${PATH}"
 RUN pip install --upgrade pip pyspark
 
 WORKDIR /app
 COPY . /app
-
-# Optional: install any Python packages your app uses
-RUN pip install -r requirements.txt || true
 
 CMD ["python", "main.py"]
