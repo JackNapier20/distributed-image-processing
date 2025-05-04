@@ -38,18 +38,26 @@ docker exec -it image-app
 # build and start in detached mode
 docker-compose up --build -d
 
-# single-worker mode
-docker-compose scale spark-worker=1
+# stop image app
+docker-compose stop image-app
 
-# run with 4 partitions (logs metrics in metrics.csv)
-docker-compose exec image-app \
-  python main.py --partitions 4 --output-csv metrics.csv
+# init namenode
+docker exec -it namenode bash
+# and insde the shell:
+hadoop fs -mkdir -p /data/images
+hadoop fs -put /local_images/* /data/images/
+hadoop fs -ls /data/images    # you should see your 21 cat/dog images
+exit
 
-# multi-worker mode
-docker-compose scale spark-worker=3
+# start image-app with params
+docker-compose up --no-deps --build -d image-app
 
-# re-run with more partitions
-docker-compose exec image-app \
-  python main.py --partitions 12 --output-csv metrics.csv
+# run main.py with 4 partitions(can't find the metrics file now)
+docker-compose exec image-app python main.py --partitions 4 --output-csv metrics.csv
 
+# scale up to 3 workers(to be verified)
+docker-compose up --no-deps -d --scale spark-worker=3
+
+# again run the main.py
+docker-compose exec image-app python main.py --partitions 12 --output-csv metrics.csv
 ```
