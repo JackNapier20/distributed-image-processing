@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import argparse
-import csv
 import os
 import socket
 import time
+from itertools import islice
 
 import cv2
 import numpy as np
@@ -13,6 +13,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 from pyspark.sql import SparkSession
 from torchvision import models
+from torchvision.models import ResNet50_Weights
 
 from cnn import CNN
 
@@ -81,34 +82,54 @@ def preprocess_image(data):
     img_normalized = img_rgb / 255.0
     return (path, img_normalized.tolist())
 
-def run_inference(arr, bc_cnn, bc_resnet, transform):
-    # reconstruct models on each executor - cnn and resnet
 
-    # CNN
-    cnn = CNN()
-    cnn.load_state_dict(bc_cnn.value)
-    cnn.eval()
-    # ResNet
-    res = models.resnet50(pretrained=False)
+def batch_rdd(rdd, batch_size):
+    # return rdd.mapPartitions(lambda it: (list(islice(it, batch_size)) for _ in iter(int, 1)))
+    def chunker(iterator):
+        batch = []
+        for item in iterator:
+            batch.append(item)
+            if len(batch) == batch_size:
+                yield batch
+                batch = []
+        if batch:  # Final partial batch
+            yield batch
+
+    return rdd.mapPartitions(chunker)
+
+def run_inference_batch(batch, bc_cnn, bc_resnet, transform):
+    cnn = CNN(); cnn.load_state_dict(bc_cnn.value); cnn.eval()
+    res = models.resnet50(weights=None)
     res.fc = nn.Linear(res.fc.in_features, 2)
     res.load_state_dict(bc_resnet.value)
     res.eval()
 
-    img_np = np.array(arr, dtype=np.float32)
-    tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0)
+    cnn_inputs = []
+    resnet_inputs = []
+    paths = []
+
+    for path, arr in batch:
+        img_np = np.array(arr, dtype=np.float32)
+        tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+        cnn_inputs.append(tensor)
+        pil = Image.fromarray((img_np * 255).astype(np.uint8))
+        resnet_inputs.append(transform(pil))
+        paths.append(path)
+
+    if not cnn_inputs or not resnet_inputs:
+        print("⚠️ Skipping empty batch during inference.")
+        return []
+
+    cnn_batch = torch.stack(cnn_inputs)
+    resnet_batch = torch.stack(resnet_inputs)
 
     with torch.no_grad():
-        out1 = cnn(tensor)
-        pred1 = int(torch.argmax(out1, dim=1).item())
+        cnn_out = cnn(cnn_batch)
+        res_out = res(resnet_batch)
+        cnn_preds = torch.argmax(cnn_out, dim=1).tolist()
+        res_preds = torch.argmax(res_out, dim=1).tolist()
 
-    # for ResNet we need normalized PIL
-    pil = Image.fromarray((img_np * 255).astype(np.uint8))
-    norm = transform(pil).unsqueeze(0)
-    with torch.no_grad():
-        out2 = res(norm)
-        pred2 = int(torch.argmax(out2, dim=1).item())
-
-    return (pred1, pred2)
+    return list(zip(paths, zip(cnn_preds, res_preds)))
 
 
 def main():
@@ -133,16 +154,13 @@ def main():
     print(f"Number of images loaded from HDFS: {count}")
 
     preprocessed = image_rdd.map(preprocess_image)
-    # Print shape of first 5 processed images to verify
-    for path, arr in preprocessed.take(5):
-        arr_np = np.array(arr) if arr is not None else None
-        print(f"{os.path.basename(path)}: shape {arr_np.shape if arr_np is not None else arr_np}")
+    batched = batch_rdd(preprocessed.filter(lambda x: x[1] is not None), 64)
 
     print("Preprocessing complete.")
 
     # 3) Load & broadcast models
     cnn_model = CNN(); cnn_model.eval()
-    resnet = models.resnet50(pretrained=True)
+    resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
     resnet.fc = nn.Linear(resnet.fc.in_features, 2)
     resnet.eval()
     bc_cnn = sc.broadcast(cnn_model.state_dict())
@@ -156,9 +174,9 @@ def main():
 
     # 4) Build inference RDD
     inference_rdd = (
-        preprocessed
-        .filter(lambda x: x[1] is not None)
-        .map(lambda x: (x[0], run_inference(x[1], bc_cnn, bc_resnet, transform)))
+        batched
+        .map(lambda batch: run_inference_batch(batch, bc_cnn, bc_resnet, transform))
+        .flatMap(lambda x: x)
     )
 
     # warm-up
