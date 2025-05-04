@@ -1,15 +1,19 @@
-from pyspark.sql import SparkSession
+#!/usr/bin/env python3
+import argparse
+import csv
+import os
+import socket
+import time
+
 import cv2
 import numpy as np
-import time
-import socket
-import os
-
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
+from pyspark.sql import SparkSession
 from torchvision import models
+
 from cnn import CNN
 
 
@@ -19,7 +23,7 @@ def wait_for_namenode(host='namenode', port=9000, timeout=2):
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 print("✅ Namenode is ready!")
-                break
+                return
         except OSError:
             print("⌛ Waiting for namenode to be ready...")
             time.sleep(2)
@@ -77,11 +81,49 @@ def preprocess_image(data):
     img_normalized = img_rgb / 255.0
     return (path, img_normalized.tolist())
 
+def run_inference(arr, bc_cnn, bc_resnet, transform):
+    # reconstruct models on each executor - cnn and resnet
+
+    # CNN
+    cnn = CNN()
+    cnn.load_state_dict(bc_cnn.value)
+    cnn.eval()
+    # ResNet
+    res = models.resnet50(pretrained=False)
+    res.fc = nn.Linear(res.fc.in_features, 2)
+    res.load_state_dict(bc_resnet.value)
+    res.eval()
+
+    img_np = np.array(arr, dtype=np.float32)
+    tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0)
+
+    with torch.no_grad():
+        out1 = cnn(tensor)
+        pred1 = int(torch.argmax(out1, dim=1).item())
+
+    # for ResNet we need normalized PIL
+    pil = Image.fromarray((img_np * 255).astype(np.uint8))
+    norm = transform(pil).unsqueeze(0)
+    with torch.no_grad():
+        out2 = res(norm)
+        pred2 = int(torch.argmax(out2, dim=1).item())
+
+    return (pred1, pred2)
+
+
 def main():
+   # parse CLI flags for number of partitions and metrics file
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--partitions", type=int, default=None,
+                        help="Repartition the RDD into this many slices")
+    parser.add_argument("--output-csv", type=str, default=None,
+                        help="Append [images, partitions, time, throughput] to this CSV")
+    args = parser.parse_args()
+
     wait_for_namenode()
     upload_images_to_hdfs()
 
-    spark = SparkSession.builder.appName("ImagePreprocessing").getOrCreate()
+    spark = SparkSession.builder.appName("DistributedInference").getOrCreate()
     sc = spark.sparkContext
 
     # Load all images directly from /data/images/*
@@ -98,49 +140,53 @@ def main():
 
     print("Preprocessing complete.")
 
-    # Loading both models
-    class_names = ["cat", "dog"]
-
-    cnn_model = CNN()
-    cnn_model.eval()
-
-    # ResNet50
+    # 3) Load & broadcast models
+    cnn_model = CNN(); cnn_model.eval()
     resnet = models.resnet50(pretrained=True)
     resnet.fc = nn.Linear(resnet.fc.in_features, 2)
     resnet.eval()
+    bc_cnn = sc.broadcast(cnn_model.state_dict())
+    bc_resnet = sc.broadcast(resnet.state_dict())
 
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.485,0.456,0.406],
+                             std=[0.229,0.224,0.225])
     ])
 
-    # Run predictions with both models
-    print("\\n Running both CNN and ResNet50 classifiers \\n")
-    for path, arr in preprocessed.take(10):
-        if arr is None:
-            continue
-        try:
-            arr_np = np.array(arr, dtype=np.float32)
-            input_tensor = torch.tensor(arr_np).permute(2, 0, 1).unsqueeze(0)  # shape = [1, 3, 224, 224]
+    # 4) Build inference RDD
+    inference_rdd = (
+        preprocessed
+        .filter(lambda x: x[1] is not None)
+        .map(lambda x: (x[0], run_inference(x[1], bc_cnn, bc_resnet, transform)))
+    )
 
-            # Simple CNN
-            with torch.no_grad():
-                cnn_out = cnn_model(input_tensor)
-                cnn_pred = class_names[torch.argmax(cnn_out).item()]
+    # warm-up
+    inference_rdd.count()
 
-            # ResNet50
-            # input_norm = transform(torch.tensor(arr_np).permute(2, 0, 1)).unsqueeze(0)
-            arr_uint8 = (arr_np * 255).astype(np.uint8)  # Convert back from float32 to uint8
-            pil_image = Image.fromarray(arr_uint8)  # Shape: [224, 224, 3]
-            input_norm = transform(pil_image).unsqueeze(0)
-            with torch.no_grad():
-                resnet_out = resnet(input_norm)
-                resnet_pred = class_names[torch.argmax(resnet_out).item()]
+    # 5) Timed run
+    start = time.time()
+    results = inference_rdd.collect()
+    elapsed = time.time() - start
+    done = len(results)
+    tput = done / elapsed if elapsed > 0 else float("inf")
 
-            print(f"{os.path.basename(path)}: CNN={cnn_pred}, ResNet50={resnet_pred}")
-        except Exception as e:
-            print(f"Error processing {path}: {e}")
+    print(f"[Benchmark] images={done}, partitions={args.partitions or 'default'}, "
+          f"time={elapsed:.2f}s, throughput={tput:.1f} img/s")
+
+    # 6) Optionally append to CSV
+    if args.output_csv:
+        with open(args.output_csv, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([done, args.partitions or -1,
+                             f"{elapsed:.2f}", f"{tput:.1f}"])
+
+    # 7) Sample predictions
+    class_names = ["cat", "dog"]
+    print("\nSample predictions:")
+    for path, (c_pred, r_pred) in results[:10]:
+        fn = os.path.basename(path)
+        print(f"  {fn} → CNN={class_names[c_pred]}, ResNet50={class_names[r_pred]}")
 
 
 if __name__ == "__main__":
