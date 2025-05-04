@@ -164,7 +164,7 @@ def main():
     # warm-up
     inference_rdd.count()
 
-    # 5) Timed run
+    # timed run
     start = time.time()
     results = inference_rdd.collect()
     elapsed = time.time() - start
@@ -174,14 +174,13 @@ def main():
     print(f"[Benchmark] images={done}, partitions={args.partitions or 'default'}, "
           f"time={elapsed:.2f}s, throughput={tput:.1f} img/s")
 
-    # 6) Optionally append to CSV
-    if args.output_csv:
-        with open(args.output_csv, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([done, args.partitions or -1,
-                             f"{elapsed:.2f}", f"{tput:.1f}"])
+    # meytrics
+    print("\n=== BENCHMARK METRICS ===")
+    print("images,partitions,time_s,throughput_img_per_s")
+    print(f"{done},{args.partitions or 'default'},{elapsed:.2f},{tput:.1f}")
+    print("=========================\n")
 
-    # 7) Sample predictions
+    # sample predictions
     class_names = ["cat", "dog"]
     print("\nSample predictions:")
     for path, (c_pred, r_pred) in results[:10]:
