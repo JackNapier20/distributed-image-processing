@@ -1,9 +1,5 @@
-#!/usr/bin/env python3
-# resnet_label_mac.py
-#
 # Load your fine‑tuned ResNet‑50, run inference on a folder or a .tar,
 # and write out a CSV of (filename, pred_label).
-
 import argparse, csv
 from pathlib import Path
 from io import BytesIO
@@ -26,7 +22,7 @@ def process_folder(model, device, src, out_csv):
     with open(out_csv, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["filename", "pred"])
-        # if src is tar
+        #if src is tar
         if src.suffix in {".tar", ".tgz", ".tar.gz"}:
             data = src.read_bytes()
             with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tf:
@@ -39,7 +35,7 @@ def process_folder(model, device, src, out_csv):
                         p = torch.argmax(model(x), 1).item()
                     writer.writerow([m.name, p])
         else:
-            # assume it's a directory of .jpg/.jpeg
+            #assuming itis  a directory of .jpg/.jpeg
             for img_path in sorted(src.glob("*.jp*g")):
                 img = Image.open(img_path).convert("RGB")
                 x = pre(img).unsqueeze(0).to(device)
@@ -56,12 +52,11 @@ def main():
     parser.add_argument("--out", default="resnet_labels.csv",
                         help="CSV output path")
     args = parser.parse_args()
-
     device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     model = load_model(args.weights, device)
     src = Path(args.src)
     process_folder(model, device, src, args.out)
-    print(f"✅ Written predictions to {args.out}")
+    print(f"Written predictions to {args.out}")
 
 if __name__ == "__main__":
     main()
