@@ -1,5 +1,4 @@
-# Load your fine‑tuned ResNet‑50, run inference on a folder or a .tar,
-# and write out a CSV of (filename, pred_label).
+# Load fine‑tuned ResNet‑50, run inference and write a CSV of (filename, pred_label).
 import argparse, csv
 from pathlib import Path
 from io import BytesIO
@@ -35,7 +34,7 @@ def process_folder(model, device, src, out_csv):
                         p = torch.argmax(model(x), 1).item()
                     writer.writerow([m.name, p])
         else:
-            #assuming itis  a directory of .jpg/.jpeg
+            # assuming it is a directory of .jpg/.jpeg
             for img_path in sorted(src.glob("*.jp*g")):
                 img = Image.open(img_path).convert("RGB")
                 x = pre(img).unsqueeze(0).to(device)

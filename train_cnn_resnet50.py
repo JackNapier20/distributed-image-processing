@@ -13,9 +13,7 @@ from torchvision import transforms, models
 from PIL import Image
 from sklearn.metrics import accuracy_score, precision_score
 
-# --------------------------------------------------------------------------------
-# 1. Dataset helper (same as before)
-# --------------------------------------------------------------------------------
+# 1. Dataset helper 
 class CatsDogsFiles(Dataset):
     def __init__(self, root_dir: str, transform=None, ext: str = "jpg|jpeg"):
         self.root = Path(root_dir)
@@ -45,9 +43,7 @@ class CatsDogsFiles(Dataset):
             img = self.transform(img)
         return img, label
 
-# --------------------------------------------------------------------------------
-# 2. Training / evaluation functions
-# --------------------------------------------------------------------------------
+# 2. Training/evaluation functions
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
@@ -75,9 +71,7 @@ def evaluate(model, loader, device):
     prec = precision_score(gts, preds, pos_label=1, average="binary")
     return acc, prec
 
-# --------------------------------------------------------------------------------
-# 3. Main
-# --------------------------------------------------------------------------------
+# 3. Main function
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True,
@@ -108,7 +102,7 @@ def main():
         transforms.ToTensor(),
     ])
 
-    # dataset & split
+    # dataset and split
     full_ds = CatsDogsFiles(args.data_dir, transform=tfm_train, ext=args.ext)
     val_len = int(len(full_ds) * args.val_split)
     train_len = len(full_ds) - val_len
@@ -150,7 +144,7 @@ def main():
         lr=args.lr
     )
 
-    print(f"▶️  Fine‑tuning ResNet‑50 on {train_len} imgs, validating on {val_len} imgs")
+    print(f"Fine‑tuning ResNet‑50 on {train_len} imgs, validating on {val_len} imgs")
     best_acc = 0.0
     for epoch in range(1, args.epochs+1):
         t0 = time.time()
@@ -158,14 +152,14 @@ def main():
         val_acc, val_prec = evaluate(model, val_loader, device)
         elapsed = time.time() - t0
         print(f"[Epoch {epoch}/{args.epochs}] "
-              f"loss={train_loss:.4f}  val_acc={val_acc:.4f}  val_prec={val_prec:.4f}  "
+              f"loss={train_loss:.4f}  val_accuracy={val_acc:.4f}  val_precision={val_prec:.4f}  "
               f"time={elapsed:.1f}s")
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), args.output)
             print(f"  ↳ 🎉  Saved best model to {args.output}")
 
-    print(f"✅ Done – best val accuracy {best_acc*100:.2f}% | weights in {args.output}")
+    print(f"Done – best val accuracy {best_acc*100:.2f}% | weights in {args.output}")
 
 if __name__ == "__main__":
     main()
