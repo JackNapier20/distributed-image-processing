@@ -2,8 +2,9 @@
 import argparse
 import os
 import socket
+import tarfile
 import time
-from itertools import islice
+from io import BytesIO
 
 import cv2
 import numpy as np
@@ -18,199 +19,178 @@ from torchvision.models import ResNet50_Weights
 from cnn import CNN
 
 
-def wait_for_namenode(host='namenode', port=9000, timeout=2):
-    """Wait until the namenode is ready and accessible"""
+def wait_for_namenode(host="namenode", port=9000, timeout=2):
+    """Wait until the namenode is accepting connections."""
     while True:
         try:
-            with socket.create_connection((host, port), timeout=timeout):
-                print("✅ Namenode is ready!")
-                return
+            socket.create_connection((host, port), timeout=timeout).close()
+            print("✅ Namenode is ready!")
+            return
         except OSError:
-            print("⌛ Waiting for namenode to be ready...")
+            print("⌛ Waiting for namenode to be ready…")
             time.sleep(2)
 
 
-def upload_images_to_hdfs():
-    """Upload all images from /local_images to HDFS /data/images/ (no subfolders)"""
-    print("Starting image upload to HDFS...")
-    
-    spark = SparkSession.builder.appName("HDFSUploader").getOrCreate()
-    hadoop_conf = spark._jsc.hadoopConfiguration()
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
-    hdfs_base_dir = spark._jvm.org.apache.hadoop.fs.Path("/data/images")
-    
-    # Create /data/images in HDFS if it doesn't exist
-    if not fs.exists(hdfs_base_dir):
-        fs.mkdirs(hdfs_base_dir)
-        print("Created directory /data/images in HDFS")
-    
-    dataset_dir = "/local_images"
-    print(f"Checking directory: {dataset_dir}")
-    print(f"Directory exists: {os.path.exists(dataset_dir)}")
-    if os.path.exists(dataset_dir):
-        print(f"Directory contents: {os.listdir(dataset_dir)}")
-        count = 0
-        for filename in os.listdir(dataset_dir):
-            if not filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                continue
-            local_path = os.path.join(dataset_dir, filename)
-            hdfs_path = f"/data/images/{filename}"
-            local_path_obj = spark._jvm.org.apache.hadoop.fs.Path(f"file://{local_path}")
-            hdfs_path_obj = spark._jvm.org.apache.hadoop.fs.Path(hdfs_path)
-            fs.copyFromLocalFile(False, True, local_path_obj, hdfs_path_obj)
-            count += 1
-            if count % 100 == 0:
-                print(f"Uploaded {count} images so far.")
+def upload_tar_to_hdfs(
+    local_tar="/local_images/catsdogs.tar",
+    hdfs_tar="hdfs://namenode:9000/datasets/catsdogs/catsdogs.tar"
+):
+    """Copy the single catsdogs.tar into HDFS."""
+    print("🔄 Uploading TAR to HDFS…")
+    spark = SparkSession.builder.appName("TarUploader").getOrCreate()
+    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(
+        spark._jsc.hadoopConfiguration()
+    )
+    local_path = spark._jvm.org.apache.hadoop.fs.Path(f"file://{local_tar}")
+    hdfs_path  = spark._jvm.org.apache.hadoop.fs.Path(hdfs_tar)
+    parent     = hdfs_path.getParent()
+    if not fs.exists(parent):
+        fs.mkdirs(parent)
+    fs.copyFromLocalFile(False, True, local_path, hdfs_path)
+    print(f"✅ TAR uploaded to {hdfs_tar}")
 
-        print(f"Upload complete. Total: {count} images.")
-        # Verify upload
-        files = fs.listStatus(hdfs_base_dir)
-        print(f"Files in HDFS: {len(files)}")
-    else:
-        print(f"Error: Dataset directory {dataset_dir} not found")
 
-def preprocess_image(data):
-    """Resize to 224x224, convert BGR to RGB, normalize to [0,1]"""
-    path, content = data
-    img_array = np.frombuffer(content, np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+def extract_from_tar(tar_bytes):
+    """Yield (filename, raw_bytes) from a .tar blob."""
+    with tarfile.open(fileobj=BytesIO(tar_bytes)) as tf:
+        for m in tf.getmembers():
+            if m.isfile():
+                yield m.name, tf.extractfile(m).read()
+
+
+def preprocess_image(item):
+    """Decode JPEG bytes, resize to 224×224, convert BGR→RGB, normalize to [0,1]."""
+    path, content = item
+    arr = np.frombuffer(content, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        print(f"Failed to decode image: {path}")
-        return (path, None)
-    img_resized = cv2.resize(img, (224, 224))
-    img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
-    img_normalized = img_rgb / 255.0
-    return (path, img_normalized.tolist())
+        return path, None
+    img = cv2.resize(img, (224, 224))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return path, (img.astype(np.float32) / 255.0).tolist()
 
 
 def batch_rdd(rdd, batch_size):
-    # return rdd.mapPartitions(lambda it: (list(islice(it, batch_size)) for _ in iter(int, 1)))
-    def chunker(iterator):
-        batch = []
-        for item in iterator:
-            batch.append(item)
-            if len(batch) == batch_size:
-                yield batch
-                batch = []
-        if batch:  # Final partial batch
-            yield batch
-
+    """Group an RDD into batches of size batch_size."""
+    def chunker(it):
+        buf = []
+        for x in it:
+            buf.append(x)
+            if len(buf) == batch_size:
+                yield buf
+                buf = []
+        if buf:
+            yield buf
     return rdd.mapPartitions(chunker)
 
+
 def run_inference_batch(batch, bc_cnn, bc_resnet, transform):
+    """Run batched CNN & ResNet inference on one partition’s batch."""
     cnn = CNN(); cnn.load_state_dict(bc_cnn.value); cnn.eval()
-    res = models.resnet50(weights=None)
-    res.fc = nn.Linear(res.fc.in_features, 2)
-    res.load_state_dict(bc_resnet.value)
-    res.eval()
+    resnet = models.resnet50(weights=None)
+    resnet.fc = nn.Linear(resnet.fc.in_features, 2)
+    resnet.load_state_dict(bc_resnet.value); resnet.eval()
 
-    cnn_inputs = []
-    resnet_inputs = []
-    paths = []
-
+    cnn_inputs, res_inputs, paths = [], [], []
     for path, arr in batch:
+        if arr is None:
+            continue
         img_np = np.array(arr, dtype=np.float32)
-        tensor = torch.from_numpy(img_np).permute(2, 0, 1)
-        cnn_inputs.append(tensor)
-        pil = Image.fromarray((img_np * 255).astype(np.uint8))
-        resnet_inputs.append(transform(pil))
+        cnn_inputs.append(torch.from_numpy(img_np).permute(2, 0, 1))
+        res_inputs.append(transform(Image.fromarray((img_np*255).astype(np.uint8))))
         paths.append(path)
 
-    if not cnn_inputs or not resnet_inputs:
-        print("⚠️ Skipping empty batch during inference.")
+    if not paths:
         return []
 
     cnn_batch = torch.stack(cnn_inputs)
-    resnet_batch = torch.stack(resnet_inputs)
-
+    res_batch = torch.stack(res_inputs)
     with torch.no_grad():
-        cnn_out = cnn(cnn_batch)
-        res_out = res(resnet_batch)
-        cnn_preds = torch.argmax(cnn_out, dim=1).tolist()
-        res_preds = torch.argmax(res_out, dim=1).tolist()
+        c_out = cnn(cnn_batch)
+        r_out = resnet(res_batch)
+        c_preds = torch.argmax(c_out, 1).tolist()
+        r_preds = torch.argmax(r_out, 1).tolist()
 
-    return list(zip(paths, zip(cnn_preds, res_preds)))
+    return list(zip(paths, zip(c_preds, r_preds)))
 
 
 def main():
-   # parse CLI flags for number of partitions and metrics file
     parser = argparse.ArgumentParser()
+    parser.add_argument("--batch-size", type=int, default=8,
+                        help="Number of images per inference batch")
     parser.add_argument("--partitions", type=int, default=None,
-                        help="Repartition the RDD into this many slices")
-    parser.add_argument("--output-csv", type=str, default=None,
-                        help="Append [images, partitions, time, throughput] to this CSV")
+                        help="Repartition RDD into this many slices")
+    parser.add_argument("--cnn-weights", default="cnn_mac_v2.pth",
+                        help="Path to your trained CNN weights (in /app/)")
+    parser.add_argument("--resnet-weights", default="resnet50_ft.pth",
+                        help="Path to your fine-tuned ResNet50 weights (in /app/)")
     args = parser.parse_args()
 
     wait_for_namenode()
-    upload_images_to_hdfs()
+    upload_tar_to_hdfs()
 
     spark = SparkSession.builder.appName("DistributedInference").getOrCreate()
     sc = spark.sparkContext
 
-    # Load all images directly from /data/images/*
-    hdfs_path = "hdfs://namenode:9000/data/images/*"
-    image_rdd = sc.binaryFiles(hdfs_path)
-    count = image_rdd.count()
-    print(f"Number of images loaded from HDFS: {count}")
+    # 1) Read the TAR from HDFS and expand it
+    raw = (sc.binaryFiles("hdfs://namenode:9000/datasets/catsdogs/catsdogs.tar")
+             .flatMap(lambda kv: extract_from_tar(kv[1])))
+    total_images = raw.count()
+    print(f"📥 Loaded {total_images} images from HDFS TAR")
 
-    preprocessed = image_rdd.map(preprocess_image)
+    # 2) Optionally repartition
+    if args.partitions:
+        raw = raw.repartition(args.partitions)
+        print(f"🔀 Repartitioned into {args.partitions} slices")
 
-    print("Preprocessing complete.")
+    # 3) Preprocess
+    pre = raw.map(preprocess_image)
 
-    # 3) Load & broadcast models
-    cnn_model = CNN(); cnn_model.eval()
+    # 4) Load & broadcast models
+    cnn = CNN(); cnn.load_state_dict(torch.load(args.cnn_weights)); cnn.eval()
     resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
     resnet.fc = nn.Linear(resnet.fc.in_features, 2)
-    resnet.eval()
-    bc_cnn = sc.broadcast(cnn_model.state_dict())
+    resnet.load_state_dict(torch.load(args.resnet_weights)); resnet.eval()
+    bc_cnn = sc.broadcast(cnn.state_dict())
     bc_resnet = sc.broadcast(resnet.state_dict())
 
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485,0.456,0.406],
-                             std=[0.229,0.224,0.225])
+        transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
     ])
 
+    # 5) Batch & inference
+    batched = batch_rdd(pre.filter(lambda x: x[1] is not None), args.batch_size)
+    batch_count = batched.map(lambda _:1).reduce(lambda a,b: a+b)
+    print(f"🗂️  Total batches: {batch_count}")
 
-
-    # 4) Build inference RDD
-    batched = batch_rdd(preprocessed.filter(lambda x: x[1] is not None), 3)
-
-    # Count and log number of batches
-    batch_counts = batched.map(lambda _: 1).reduce(lambda a, b: a + b)
-    print(f"📊 Total batches created: {batch_counts}")
-
-    inference_rdd = (
-            batched
-            .map(lambda batch: run_inference_batch(batch, bc_cnn, bc_resnet, transform))
-            .flatMap(lambda x: x)
-        )
+    inf = (batched
+           .map(lambda b: run_inference_batch(b, bc_cnn, bc_resnet, transform))
+           .flatMap(lambda x: x))
 
     # warm-up
-    inference_rdd.count()
+    inf.count()
 
     # timed run
-    start = time.time()
-    results = inference_rdd.collect()
-    elapsed = time.time() - start
-    done = len(results)
-    tput = done / elapsed if elapsed > 0 else float("inf")
+    t0 = time.time()
+    results = inf.collect()
+    total_time = time.time() - t0
+    M = len(results)
+    throughput = M / total_time if total_time > 0 else float("inf")
 
-    print(f"[Benchmark] images={done}, partitions={args.partitions or 'default'}, "
-          f"time={elapsed:.2f}s, throughput={tput:.1f} img/s")
-
-    # meytrics
+    # 6) Print metrics
     print("\n=== BENCHMARK METRICS ===")
-    print("images,partitions,time_s,throughput_img_per_s")
-    print(f"{done},{args.partitions or 'default'},{elapsed:.2f},{tput:.1f}")
+    print("images,partitions,batch_size,time_s,throughput_img_per_s")
+    print(f"{M},{args.partitions or 'default'},{args.batch_size},"
+          f"{total_time:.2f},{throughput:.1f}")
     print("=========================\n")
 
-    # sample predictions
-    class_names = ["cat", "dog"]
-    print("\nSample predictions:")
-    for path, (c_pred, r_pred) in results[:10]:
+    # 7) Sample predictions
+    names = ["cat", "dog"]
+    print("Sample predictions:")
+    for path, (c, r) in results[:10]:
         fn = os.path.basename(path)
-        print(f"  {fn} → CNN={class_names[c_pred]}, ResNet50={class_names[r_pred]}")
+        print(f"  {fn} → CNN={names[c]}, ResNet50={names[r]}")
 
 
 if __name__ == "__main__":

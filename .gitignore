@@ -8,6 +8,6 @@ dogs-vs-cats/
 app/__pycache__/
 *.jpg
 *.jpeg
-
-
+__pycache__
+images/
 

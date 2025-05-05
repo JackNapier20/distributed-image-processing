@@ -35,6 +35,9 @@ docker exec -it image-app
 # Multi-node/Single-node analysis
 ```bash
 # full commands
+# tar our image files, so its easy to upload to HDFS
+tar -cf images/catsdogs.tar images/*.jpg
+
 # build and start in detached mode
 docker-compose up --build -d
 
@@ -52,12 +55,12 @@ exit
 # start image-app with params
 docker-compose up --no-deps --build -d image-app
 
-# run main.py with 4 partitions(can't find the metrics file now)
-docker-compose exec image-app python main.py --partitions 4 --output-csv metrics.csv
+# run main.py with 4 partitions
+docker-compose exec image-app python main.py --partitions 4
 
 # scale up to 3 workers(to be verified)
 docker-compose up --no-deps -d --scale spark-worker=3
 
 # again run the main.py
-docker-compose exec image-app python main.py --partitions 12 --output-csv metrics.csv
+docker-compose exec image-app python main.py --partitions 12
 ```
