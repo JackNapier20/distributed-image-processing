@@ -1,36 +1,67 @@
 version: "3.9"
 
+networks:
+  hadoop-net:
+    driver: bridge
+
+volumes:
+  datanode-data: # wiped by `docker compose down -v`
+  local-images:
+
+
 services:
+  # ───────────────────────────────── HDFS ─────────────────────────────────
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+    hostname: namenode
+    environment:
+      - CLUSTER_NAME=endsem
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "9000:9000" # HDFS RPC
+      - "50070:50070" # NameNode UI
+    networks: [ hadoop-net ]
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
+    depends_on: [ namenode ]
+    environment:
+      - CLUSTER_NAME=endsem
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - datanode-data:/hadoop/dfs/data
+    ports:
+      - "50075:50075" # DataNode UI
+    networks: [ hadoop-net ]
+
+  # ─────────────────────────── Apache Spark ────────────────────────────
   spark-master:
-    build: ./app
-    container_name: spark-master
+    build: ./app # uses your “app” Dockerfile
     hostname: spark-master
-    command: bash -c "/opt/spark/sbin/start-master.sh && tail -f /dev/null"
     environment:
       - SPARK_MODE=master
       - PYSPARK_PYTHON=/usr/bin/python3
-      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+    command: [ "/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8080" ]
     ports:
-      - "7077:7077"
-      - "8080:8080"
-    networks:
-      - hadoop-net
+      - "7077:7077" # Spark RPC
+      - "8080:8080" # Spark Master UI
+    networks: [ hadoop-net ]
 
   spark-worker:
     build: ./app
-    container_name: spark-worker
-    depends_on:
-      - spark-master
-    command: bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077 && tail -f /dev/null"
+    depends_on: [ spark-master ]
     environment:
       - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
       - PYSPARK_PYTHON=/usr/bin/python3
-    ports:
-      - "8081:8081"
-    networks:
-      - hadoop-net
+      - SPARK_WORKER_MEMORY=8g
+    command: [ "/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077" ]
+    expose:
+      - "8081" # each worker UI → visible via port‑mapping on first worker
+    networks: [ hadoop-net ]
+    # ⚠︎  NO `container_name`: lets docker compose create unique names
+    # scale with:  docker compose up -d --build --scale spark-worker=2
 
+    # ───────────────────────────── Inference app ──────────────────────────
   image-app:
     build: ./app
     container_name: image-app
@@ -40,57 +71,11 @@ services:
       - namenode
       - datanode
     environment:
-      - SPARK_MASTER=spark://spark-master:7077
-      - PYSPARK_PYTHON=/usr/bin/python3
-      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+      - HADOOP_CONF_DIR=/etc/hadoop
     volumes:
+      - ./hadoop-config:/etc/hadoop # ← core‑site.xml lives here
       - ./app:/app
       - ./images:/local_images
-    # command: "python main.py"
+    command: sleep infinity # keeps container up for exec
     networks:
       - hadoop-net
-
-  namenode:
-    platform: linux/amd64
-    build:
-      context: .
-      dockerfile: Dockerfile.namenode
-    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
-    container_name: namenode
-    environment:
-      - CLUSTER_NAME=test
-      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
-      - HADOOP_CONF_DIR=/etc/hadoop
-    ports:
-      - "9000:9000"
-      - "50070:50070"
-    volumes:
-      - ./images:/local_images
-      - ./hadoop-config:/etc/hadoop
-    networks:
-      - hadoop-net
-
-  datanode:
-    platform: linux/amd64
-    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
-    container_name: datanode
-    depends_on:
-      - namenode
-    environment:
-      - CLUSTER_NAME=test
-      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
-      - HADOOP_CONF_DIR=/etc/hadoop
-    volumes:
-      - datanode-data:/hadoop/dfs/data
-    ports:
-      - "50075:50075"
-    networks:
-      - hadoop-net
-
-volumes:
-  datanode-data:
-
-
-networks:
-  hadoop-net:
-    driver: bridge
