@@ -114,9 +114,9 @@ def main():
     parser.add_argument("--partitions", type=int, default=None,
                         help="Repartition RDD into this many slices")
     parser.add_argument("--cnn-weights", default="cnn_mac_v2.pth",
-                        help="Path to your trained CNN weights (in /app/)")
+                        help="Path to trained CNN weights (in /app/)")
     parser.add_argument("--resnet-weights", default="resnet50_ft.pth",
-                        help="Path to your fine-tuned ResNet50 weights (in /app/)")
+                        help="Path to fine-tuned ResNet50 weights (in /app/)")
     args = parser.parse_args()
 
     waitForNamenode()
@@ -129,12 +129,12 @@ def main():
     raw = (sc.binaryFiles("hdfs://namenode:9000/datasets/catsdogs/catsdogs.tar")
              .flatMap(lambda kv: extractFromTar(kv[1])))
     total_images = raw.count()
-    print(f"📥 Loaded {total_images} images from HDFS TAR")
+    print(f"Loaded {total_images} images from HDFS TAR")
 
     #optionally repartition
     if args.partitions:
         raw = raw.repartition(args.partitions)
-        print(f"🔀 Repartitioned into {args.partitions} slices")
+        print(f"Repartitioned into {args.partitions} slices")
 
     #preprocessing
     pre = raw.map(preprocess_image)

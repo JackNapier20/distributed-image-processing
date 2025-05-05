@@ -29,7 +29,7 @@ class CNN(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            nn.Flatten(),                                          # 32 × 56 × 56 = 100 352
+            nn.Flatten(),                                          # 32 × 56 × 56 = 100352
             nn.Linear(32 * 56 * 56, 128),
             nn.ReLU(inplace=True),
             nn.Linear(128, num_classes)
@@ -54,9 +54,9 @@ class CNN(nn.Module):
         return x
 
 
-# quick smoke‑test: python cnn.py
 if __name__ == "__main__":
     model = CNN()
     dummy = torch.randn(1, 3, 224, 224)
     out = model(dummy)
-    print("output shape:", out.shape)          # should be [1, 2]
+    # output shape should be [1, 2]
+    print("output shape:", out.shape)          
