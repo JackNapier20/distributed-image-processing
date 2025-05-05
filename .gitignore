@@ -6,5 +6,8 @@ dogs-vs-cats.zip
 dogs-vs-cats/
 .idea
 app/__pycache__/
+*.jpg
+*.jpeg
+
 
 
