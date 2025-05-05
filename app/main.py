@@ -1,10 +1,7 @@
-#!/usr/bin/env python3
 import argparse
 import os
 import socket
 import time
-from itertools import islice
-
 import cv2
 import numpy as np
 import torch
@@ -14,41 +11,38 @@ from PIL import Image
 from pyspark.sql import SparkSession
 from torchvision import models
 from torchvision.models import ResNet50_Weights
-
 from cnn import CNN
 
 
-def wait_for_namenode(host='namenode', port=9000, timeout=2):
-    """Wait until the namenode is ready and accessible"""
+def waitForNamenode(host='namenode', port=9000, timeout=2):
+    #Wait until namenode is up and accessible
     while True:
         try:
             with socket.create_connection((host, port), timeout=timeout):
-                print("✅ Namenode is ready!")
+                print("Namenode is up and running!")
                 return
         except OSError:
-            print("⌛ Waiting for namenode to be ready...")
+            print("Waiting for namenode to be ready!")
             time.sleep(2)
 
-
-def upload_images_to_hdfs():
-    """Upload all images from /local_images to HDFS /data/images/ (no subfolders)"""
-    print("Starting image upload to HDFS...")
-    
+def imageUploadToHDFS():
+    #Upload all images from /local_images to HDFS /data/images/
+    print("Starting image upload to HDFS!")
     spark = SparkSession.builder.appName("HDFSUploader").getOrCreate()
     hadoop_conf = spark._jsc.hadoopConfiguration()
     fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
     hdfs_base_dir = spark._jvm.org.apache.hadoop.fs.Path("/data/images")
     
-    # Create /data/images in HDFS if it doesn't exist
+    #Create /data/images directory in HDFS if it doesn't exist
     if not fs.exists(hdfs_base_dir):
         fs.mkdirs(hdfs_base_dir)
-        print("Created directory /data/images in HDFS")
-    
+        # print("Created directory /data/images in HDFS")
+
     dataset_dir = "/local_images"
-    print(f"Checking directory: {dataset_dir}")
-    print(f"Directory exists: {os.path.exists(dataset_dir)}")
+    # print(f"Checking directory: {dataset_dir}")
+    # print(f"Directory exists: {os.path.exists(dataset_dir)}")
     if os.path.exists(dataset_dir):
-        print(f"Directory contents: {os.listdir(dataset_dir)}")
+        # print(f"Directory contents: {os.listdir(dataset_dir)}")
         count = 0
         for filename in os.listdir(dataset_dir):
             if not filename.lower().endswith(('.jpg', '.jpeg', '.png')):
@@ -60,31 +54,29 @@ def upload_images_to_hdfs():
             fs.copyFromLocalFile(False, True, local_path_obj, hdfs_path_obj)
             count += 1
             if count % 100 == 0:
-                print(f"Uploaded {count} images so far.")
+                print(f"Uploaded {count} images so far!")
 
-        print(f"Upload complete. Total: {count} images.")
-        # Verify upload
-        files = fs.listStatus(hdfs_base_dir)
-        print(f"Files in HDFS: {len(files)}")
+        print(f"Upload complete. Images uploaded: {count} !")
+        # files = fs.listStatus(hdfs_base_dir)
+        # print(f"Files in HDFS: {len(files)}")
     else:
-        print(f"Error: Dataset directory {dataset_dir} not found")
+        print(f"Error: Directory {dataset_dir} does not exist!")
 
+#Resize the images to 224x224,convert BGR to RGB and normalize to [0,1]
 def preprocess_image(data):
-    """Resize to 224x224, convert BGR to RGB, normalize to [0,1]"""
     path, content = data
     img_array = np.frombuffer(content, np.uint8)
     img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
     if img is None:
         print(f"Failed to decode image: {path}")
-        return (path, None)
+        return (path,None)
     img_resized = cv2.resize(img, (224, 224))
     img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
-    img_normalized = img_rgb / 255.0
+    img_normalized = img_rgb/255.0
     return (path, img_normalized.tolist())
 
 
 def batch_rdd(rdd, batch_size):
-    # return rdd.mapPartitions(lambda it: (list(islice(it, batch_size)) for _ in iter(int, 1)))
     def chunker(iterator):
         batch = []
         for item in iterator:
@@ -97,6 +89,7 @@ def batch_rdd(rdd, batch_size):
 
     return rdd.mapPartitions(chunker)
 
+#Function to run inference in batch
 def run_inference_batch(batch, bc_cnn, bc_resnet, transform):
     cnn = CNN(); cnn.load_state_dict(bc_cnn.value); cnn.eval()
     res = models.resnet50(weights=None)
@@ -117,7 +110,7 @@ def run_inference_batch(batch, bc_cnn, bc_resnet, transform):
         paths.append(path)
 
     if not cnn_inputs or not resnet_inputs:
-        print("⚠️ Skipping empty batch during inference.")
+        # print("Skipping empty batch during inference.")
         return []
 
     cnn_batch = torch.stack(cnn_inputs)
@@ -133,7 +126,7 @@ def run_inference_batch(batch, bc_cnn, bc_resnet, transform):
 
 
 def main():
-   # parse CLI flags for number of partitions and metrics file
+   #parsing CLI flags for number of partitions and metrics file
     parser = argparse.ArgumentParser()
     parser.add_argument("--partitions", type=int, default=None,
                         help="Repartition the RDD into this many slices")
@@ -141,23 +134,22 @@ def main():
                         help="Append [images, partitions, time, throughput] to this CSV")
     args = parser.parse_args()
 
-    wait_for_namenode()
-    upload_images_to_hdfs()
+    waitForNamenode()
+    imageUploadToHDFS()
 
     spark = SparkSession.builder.appName("DistributedInference").getOrCreate()
     sc = spark.sparkContext
 
-    # Load all images directly from /data/images/*
+    #Loading all images directly from /data/images/*
     hdfs_path = "hdfs://namenode:9000/data/images/*"
     image_rdd = sc.binaryFiles(hdfs_path)
     count = image_rdd.count()
     print(f"Number of images loaded from HDFS: {count}")
 
     preprocessed = image_rdd.map(preprocess_image)
+    print("Preprocessing is complete!")
 
-    print("Preprocessing complete.")
-
-    # 3) Load & broadcast models
+   #Load and broadcast CNN and Resnet50 models
     cnn_model = CNN(); cnn_model.eval()
     resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
     resnet.fc = nn.Linear(resnet.fc.in_features, 2)
@@ -171,25 +163,16 @@ def main():
                              std=[0.229,0.224,0.225])
     ])
 
-
-
-    # 4) Build inference RDD
-    batched = batch_rdd(preprocessed.filter(lambda x: x[1] is not None), 3)
-
-    # Count and log number of batches
-    batch_counts = batched.map(lambda _: 1).reduce(lambda a, b: a + b)
-    print(f"📊 Total batches created: {batch_counts}")
-
+    #batch inference
+    batched = batch_rdd(preprocessed.filter(lambda x: x[1] is not None), 64)
+    batchCount = batched.map(lambda _: 1).reduce(lambda a, b: a + b)
+    print(f"Number of batches created: {batchCount}")
     inference_rdd = (
             batched
             .map(lambda batch: run_inference_batch(batch, bc_cnn, bc_resnet, transform))
             .flatMap(lambda x: x)
         )
-
-    # warm-up
     inference_rdd.count()
-
-    # timed run
     start = time.time()
     results = inference_rdd.collect()
     elapsed = time.time() - start
@@ -199,18 +182,19 @@ def main():
     print(f"[Benchmark] images={done}, partitions={args.partitions or 'default'}, "
           f"time={elapsed:.2f}s, throughput={tput:.1f} img/s")
 
-    # meytrics
-    print("\n=== BENCHMARK METRICS ===")
-    print("images,partitions,time_s,throughput_img_per_s")
+    #metrics
+    print("===============================================================")
+    print("BENCHMARK METRICS")
+    print("images,partitions,time(sec),throughput(img/sec)")
     print(f"{done},{args.partitions or 'default'},{elapsed:.2f},{tput:.1f}")
-    print("=========================\n")
+    print("===============================================================")
 
-    # sample predictions
+    #predictions
     class_names = ["cat", "dog"]
-    print("\nSample predictions:")
+    print("Sample predictions:")
     for path, (c_pred, r_pred) in results[:10]:
         fn = os.path.basename(path)
-        print(f"  {fn} → CNN={class_names[c_pred]}, ResNet50={class_names[r_pred]}")
+        print(f"{fn} : CNN={class_names[c_pred]}, ResNet50={class_names[r_pred]}")
 
 
 if __name__ == "__main__":

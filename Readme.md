@@ -2,7 +2,14 @@
 
 This project sets up a distributed image processing pipeline using Docker, Hadoop (HDFS), and Apache Spark. The system allows users to store images in HDFS and run image-processing jobs via a Spark-based application.
 
-## 🐳 Getting Started
+## Contributers 
+- [Isha](https://github.com/isha-234)
+- [Lavanika](https://github.com/lavanika)
+- [Sri Ram](https://github.com/srirambandi)
+- [Siva](https://github.com/siva)
+
+
+## Getting Started
 
 ### 1. Build and Start the Docker Containers
 
@@ -17,22 +24,45 @@ This will start all necessary services including:
 	•	Spark Master and Workers
 	•	image-app (custom Spark-based image processor)
 
-# Access the NameNode container
+This will also give an error saying - 
+```commandline
+ java.io.IOException: Input Pattern hdfs://namenode:9000/data/images/* matches 0 files
+```
+
+It just means that the local images have not been loaded to HDFS. We do this in the next step.
+
+On another terminal, run the following commands - 
+#### Access the NameNode container
+```
 docker exec -it namenode bash
-
-# Inside the container, create the target directory in HDFS
+```
+#### Inside the container, create the target directory in HDFS
+```
 hadoop fs -mkdir -p /data/images
+```
+#### Put local images (assuming they are mounted to /local_images) into HDFS
 
-# Put local images (assuming they're mounted to /local_images) into HDFS
+```
 hadoop fs -put /local_images/* /data/images/
+```
 
-# Verify upload
+#### Verify upload
+```
 hadoop fs -ls /data/images
 
-# Start inage app
-docker exec -it image-app
+```
 
-# Multi-node/Single-node analysis
+#### Start image app
+```
+docker start -i image-app
+
+```
+or you can run docker compose up command in another terminal
+```commandline
+docker compose up
+```
+### 2. Multi-node/Single-node analysis
+
 ```bash
 # full commands
 # build and start in detached mode
