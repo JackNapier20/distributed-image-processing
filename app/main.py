@@ -154,7 +154,6 @@ def main():
     print(f"Number of images loaded from HDFS: {count}")
 
     preprocessed = image_rdd.map(preprocess_image)
-    batched = batch_rdd(preprocessed.filter(lambda x: x[1] is not None), 64)
 
     print("Preprocessing complete.")
 
@@ -172,12 +171,20 @@ def main():
                              std=[0.229,0.224,0.225])
     ])
 
+
+
     # 4) Build inference RDD
+    batched = batch_rdd(preprocessed.filter(lambda x: x[1] is not None), 3)
+
+    # Count and log number of batches
+    batch_counts = batched.map(lambda _: 1).reduce(lambda a, b: a + b)
+    print(f"📊 Total batches created: {batch_counts}")
+
     inference_rdd = (
-        batched
-        .map(lambda batch: run_inference_batch(batch, bc_cnn, bc_resnet, transform))
-        .flatMap(lambda x: x)
-    )
+            batched
+            .map(lambda batch: run_inference_batch(batch, bc_cnn, bc_resnet, transform))
+            .flatMap(lambda x: x)
+        )
 
     # warm-up
     inference_rdd.count()
