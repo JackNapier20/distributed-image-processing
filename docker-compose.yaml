@@ -46,7 +46,7 @@ services:
     volumes:
       - ./app:/app
       - ./images:/local_images
-    command: "python main.py"
+    # command: "python main.py"
     networks:
       - hadoop-net
 
