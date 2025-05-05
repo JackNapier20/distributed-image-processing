@@ -34,7 +34,7 @@ def uploadToHDFS(
 ):
     #Copy catsdogs.tar into HDFS
     print("Uploading TAR to HDFS!")
-    spark = SparkSession.builder.appName("TarUploader").getOrCreate()
+    spark = SparkSession.builder.appName("TarUploader").config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000").getOrCreate()
     fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(
         spark._jsc.hadoopConfiguration()
     )
@@ -122,7 +122,7 @@ def main():
     waitForNamenode()
     uploadToHDFS()
 
-    spark = SparkSession.builder.appName("DistributedInference").getOrCreate()
+    spark = SparkSession.builder.appName("DistributedInference").config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000").getOrCreate()
     sc = spark.sparkContext
 
     #read the TAR from HDFS and expand it
@@ -140,10 +140,10 @@ def main():
     pre = raw.map(preprocess_image)
 
     #loading & broadcasting CNN and resnet models
-    cnn = CNN(); cnn.load_state_dict(torch.load(args.cnn_weights)); cnn.eval()
+    cnn = CNN(); cnn.load_state_dict(torch.load(args.cnn_weights, map_location=torch.device("cpu"))); cnn.eval()
     resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
     resnet.fc = nn.Linear(resnet.fc.in_features, 2)
-    resnet.load_state_dict(torch.load(args.resnet_weights)); resnet.eval()
+    resnet.load_state_dict(torch.load(args.resnet_weights,  map_location=torch.device("cpu"))); resnet.eval()
     bc_cnn = sc.broadcast(cnn.state_dict())
     bc_resnet = sc.broadcast(resnet.state_dict())
     transform = transforms.Compose([

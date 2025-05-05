@@ -74,14 +74,6 @@ docker-compose up --build -d
 # stop image app
 docker-compose stop image-app
 
-# init namenode
-docker exec -it namenode bash
-# and insde the shell:
-hadoop fs -mkdir -p /data/images
-hadoop fs -put /local_images/* /data/images/
-hadoop fs -ls /data/images    # you should see your 21 cat/dog images
-exit
-
 # start image-app with params
 docker-compose up --no-deps --build -d image-app
 
