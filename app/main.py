@@ -117,8 +117,10 @@ def main():
         .config("spark.driver.host",        "image-app")
         .config("spark.driver.port",        "7079")
         .config("spark.python.worker.reuse","true")
-        .config("spark.executor.memory", "8g")
-        .config("spark.executor.cores",  "2")   
+        .config("spark.executor.cores", 2)
+        .config("spark.executor.memory", "4g")
+        .config("spark.default.parallelism", 12)
+        .config("spark.sql.shuffle.partitions", 12)
         .getOrCreate()
     )
 
