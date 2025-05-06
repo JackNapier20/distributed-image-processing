@@ -1,9 +1,7 @@
 FROM bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
-
 #Copy config files
 COPY hadoop-config/core-site.xml /etc/hadoop/core-site.xml
 COPY custom-entrypoint.sh /usr/local/bin/custom-entrypoint.sh
-
 # Giving the bash entrypoint script execution permissions
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# Here we train the simple 2‑class CNN defined in cnn.py and report accuracy and precision.
 
 import argparse, os, time, random
 from pathlib import Path
@@ -13,8 +12,8 @@ from sklearn.metrics import accuracy_score, precision_score
 
 from cnn import CNN  
 
-# 1.  custom dataset to infer the label from the file‑name prefix (cat or dog)
-# images in jpg or jpeg format
+#custom dataset to infer the label from the file‑name prefix (cat or dog)
+#images in jpg or jpeg format
 class CatsDogsFiles(Dataset):
     def __init__(self, root_dir: str, transform=None):
         self.root = Path(root_dir)
@@ -33,8 +32,8 @@ class CatsDogsFiles(Dataset):
         if self.transform: img = self.transform(img)
         return img, label
 
-# 2. Training/evaluation helper functions
-def train_one_epoch(model, loader, criterion, optimizer, device):
+#Training/evaluation helper functions
+def trainOneEpoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
     for imgs, labels in loader:
@@ -64,7 +63,6 @@ def evaluate(model, loader, device):
     prec = precision_score(gts, preds, pos_label=1, average="binary")
     return acc, prec
 
-# 3. Main function
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True,
@@ -106,7 +104,6 @@ def main():
     train_len = len(full_ds) - val_len
     train_ds, val_ds = random_split(full_ds, [train_len, val_len],
                                     generator=torch.Generator().manual_seed(args.seed))
-    # validation uses its own transform 
     val_ds.dataset.transform = tfm_val
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
@@ -127,7 +124,7 @@ def main():
     best_acc = 0.0
     for epoch in range(1, args.epochs+1):
         t0 = time.time()
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss = trainOneEpoch(model, train_loader, criterion, optimizer, device)
         val_acc, val_prec = evaluate(model, val_loader, device)
         elapsed = time.time() - t0
         print(f"[Epoch {epoch}/{args.epochs}] "

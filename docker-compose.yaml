@@ -8,9 +8,7 @@ volumes:
   datanode-data:
   local-images:
 
-
 services:
-  # ───────────────────────────────── HDFS ─────────────────────────────────
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
     hostname: namenode
@@ -18,8 +16,8 @@ services:
       - CLUSTER_NAME=endsem
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
     ports:
-      - "9000:9000" # HDFS RPC
-      - "50070:50070" # NameNode UI
+      - "9000:9000"
+      - "50070:50070"
     networks: [ hadoop-net ]
 
   datanode:
@@ -31,10 +29,9 @@ services:
     volumes:
       - datanode-data:/hadoop/dfs/data
     ports:
-      - "50075:50075" # DataNode UI
+      - "50075:50075"
     networks: [ hadoop-net ]
 
-  # ─────────────────────────── Apache Spark ────────────────────────────
   spark-master:
     build: ./app
     hostname: spark-master
@@ -43,8 +40,8 @@ services:
       - PYSPARK_PYTHON=/usr/bin/python3
     command: [ "/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8080" ]
     ports:
-      - "7077:7077" # Spark RPC
-      - "8080:8080" # Spark Master UI
+      - "7077:7077"
+      - "8080:8080"
     networks: [ hadoop-net ]
 
   spark-worker:
@@ -61,7 +58,6 @@ services:
       - "8081"
     networks: [ hadoop-net ]
 
-    # ───────────────────────────── Inference app ──────────────────────────
   image-app:
     build: ./app
     hostname: image-app
@@ -79,6 +75,6 @@ services:
       - ./images:/local_images
     ports:
       - "7079:7079"
-    command: sleep infinity # keeps container up for exec
+    command: sleep infinity
     networks:
       - hadoop-net
