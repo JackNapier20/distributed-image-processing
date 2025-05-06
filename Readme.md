@@ -6,7 +6,7 @@ This project sets up a distributed image processing pipeline using Docker, Hadoo
 - [Isha](https://github.com/isha-234)
 - [Lavanika](https://github.com/lava-nika)
 - [Sri Ram](https://github.com/srirambandi)
-- [Siva](https://github.com/siva)
+- [Sivaraaman](https://github.com/JackNapier20)
 
 
 ## Running the experiments
