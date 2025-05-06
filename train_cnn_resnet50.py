@@ -157,7 +157,7 @@ def main():
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), args.output)
-            print(f"  ↳ 🎉  Saved best model to {args.output}")
+            print(f"Saved best model to {args.output}")
 
     print(f"Done – best val accuracy {best_acc*100:.2f}% | weights in {args.output}")
 
