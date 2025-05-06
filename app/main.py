@@ -8,8 +8,8 @@ from pyspark.sql import SparkSession
 from torchvision import models, transforms
 from cnn import CNN          # your custom small‑CNN
 
-os.environ["SPARK_DRIVER_MEMORY"] = "4g"       # driver JVM heap
-os.environ["SPARK_EXECUTOR_MEMORY"] = "3g"     # each executor heap
+os.environ["SPARK_DRIVER_MEMORY"] = "2g"       # driver JVM heap
+os.environ["SPARK_EXECUTOR_MEMORY"] = "2g"     # each executor heap
 
 # ----------------------------------------------------------------------
 # helpers
@@ -108,13 +108,23 @@ def main():
 
     # 1) wait for HDFS ⇒ copy dataset once
     wait_for_namenode()
-    spark = (SparkSession.builder
-         .appName("TarUploader")
-         .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")  # <─ NEW
-         .getOrCreate())
+    spark = (
+        SparkSession.builder
+        .appName("CatsVsDogsInference")
+        .master("spark://spark-master:7077")       # ← run on your standalone cluster
+        .config("spark.hadoop.fs.defaultFS", "hdfs://namenode:9000")
+        .config("spark.driver.bindAddress", "0.0.0.0")
+        .config("spark.driver.host",        "image-app")
+        .config("spark.driver.port",        "7079")
+        .config("spark.python.worker.reuse","true")
+        .config("spark.executor.memory", "8g")
+        .config("spark.executor.cores",  "2")   
+        .getOrCreate()
+    )
 
     upload_tar(args.local_tar, args.hdfs_tar, spark)
     sc = spark.sparkContext
+    sc.addPyFile("/app/cnn.py")
 
     # 2) Load the TAR into an RDD
     raw = (sc.binaryFiles(args.hdfs_tar)
@@ -145,13 +155,38 @@ def main():
 
     print(f"Total number of batches: {batched.map(lambda _:1).sum()}")
 
-    inf = (batched
-           .map(lambda b: run_batch(b, bc_cnn, bc_resnet, tfm))
-           .flatMap(lambda x: x))              # (path,(cnn,resnet))
+    def infer_partition(batches, bc_cnn, bc_resnet, tfm):
+    # this runs exactly once per Python worker
+        cnn    = CNN();    cnn.load_state_dict(bc_cnn.value);    cnn.eval()
+        resnet = models.resnet50(weights=None)
+        resnet.fc = nn.Linear(resnet.fc.in_features, 2)
+        resnet.load_state_dict(bc_resnet.value);                resnet.eval()
+
+        for batch in batches:
+            c_in, r_in, paths = [], [], []
+            for path, arr in batch:
+                if arr is None: continue
+                img_np = np.asarray(arr, np.float32)
+                c_in.append(torch.from_numpy(img_np).permute(2,0,1))
+                r_in.append(tfm(Image.fromarray((img_np*255).astype(np.uint8))))
+                paths.append(path)
+
+            if not paths:
+                continue
+
+            with torch.no_grad():
+                c_pred = torch.argmax(cnn(torch.stack(c_in)),    1).tolist()
+                r_pred = torch.argmax(resnet(torch.stack(r_in)), 1).tolist()
+
+            for p, cr in zip(paths, zip(c_pred, r_pred)):
+                yield (p, cr)
+
+    inf = batched.mapPartitions(lambda it: infer_partition(it, bc_cnn, bc_resnet, tfm))
+
 
     # 5) Time a single full pass (action = count)
     t0 = time.time()
-    # pred_count = inf.count()
+    pred_count = inf.count()
     elapsed = time.time() - t0
     thr = total / elapsed if elapsed else float("inf")
 

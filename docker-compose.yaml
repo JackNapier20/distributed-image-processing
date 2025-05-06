@@ -53,7 +53,9 @@ services:
     environment:
       - SPARK_MODE=worker
       - PYSPARK_PYTHON=/usr/bin/python3
-      - SPARK_WORKER_MEMORY=8g
+      - SPARK_WORKER_MEMORY=12g
+      - SPARK_WORKER_CORES=4
+
     command: [ "/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077" ]
     expose:
       - "8081" # each worker UI → visible via port‑mapping on first worker
@@ -64,6 +66,7 @@ services:
     # ───────────────────────────── Inference app ──────────────────────────
   image-app:
     build: ./app
+    hostname: image-app
     container_name: image-app
     depends_on:
       - spark-master
@@ -76,6 +79,8 @@ services:
       - ./hadoop-config:/etc/hadoop # ← core‑site.xml lives here
       - ./app:/app
       - ./images:/local_images
+    ports:
+      - "7079:7079"
     command: sleep infinity # keeps container up for exec
     networks:
       - hadoop-net
