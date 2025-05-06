@@ -5,7 +5,7 @@ networks:
     driver: bridge
 
 volumes:
-  datanode-data: # wiped by `docker compose down -v`
+  datanode-data:
   local-images:
 
 
@@ -36,7 +36,7 @@ services:
 
   # ─────────────────────────── Apache Spark ────────────────────────────
   spark-master:
-    build: ./app # uses your “app” Dockerfile
+    build: ./app
     hostname: spark-master
     environment:
       - SPARK_MODE=master
@@ -58,10 +58,8 @@ services:
 
     command: [ "/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077" ]
     expose:
-      - "8081" # each worker UI → visible via port‑mapping on first worker
+      - "8081"
     networks: [ hadoop-net ]
-    # ⚠︎  NO `container_name`: lets docker compose create unique names
-    # scale with:  docker compose up -d --build --scale spark-worker=2
 
     # ───────────────────────────── Inference app ──────────────────────────
   image-app:
@@ -76,7 +74,7 @@ services:
     environment:
       - HADOOP_CONF_DIR=/etc/hadoop
     volumes:
-      - ./hadoop-config:/etc/hadoop # ← core‑site.xml lives here
+      - ./hadoop-config:/etc/hadoop
       - ./app:/app
       - ./images:/local_images
     ports:
